@@ -27,6 +27,12 @@ type FillResponse = {
 
 const orderFile = ref<File | null>(null)
 const shipmentFile = ref<File | null>(null)
+const orderPassword = ref('')
+const shipmentPassword = ref('')
+const passwordPrompt = ref<{ orderFile: boolean, shipmentFile: boolean }>({
+  orderFile: false,
+  shipmentFile: false,
+})
 const loading = ref(false)
 const errorMessage = ref('')
 const result = ref<FillResponse | null>(null)
@@ -38,6 +44,14 @@ function onFileChange(event: Event, kind: 'order' | 'shipment') {
   const file = files?.[0] ?? null
   if (kind === 'order') orderFile.value = file
   if (kind === 'shipment') shipmentFile.value = file
+  if (kind === 'order') {
+    orderPassword.value = ''
+    passwordPrompt.value.orderFile = false
+  }
+  if (kind === 'shipment') {
+    shipmentPassword.value = ''
+    passwordPrompt.value.shipmentFile = false
+  }
   result.value = null
   errorMessage.value = ''
 }
@@ -68,12 +82,20 @@ async function submit() {
     const form = new FormData()
     form.append('orderFile', orderFile.value)
     form.append('shipmentFile', shipmentFile.value)
+    if (orderPassword.value) form.append('orderPassword', orderPassword.value)
+    if (shipmentPassword.value) form.append('shipmentPassword', shipmentPassword.value)
 
     result.value = await $fetch<FillResponse>('/api/fill', {
       method: 'POST',
       body: form,
     })
   } catch (error: any) {
+    const file = error?.data?.data?.file
+    const code = error?.data?.data?.code
+    if (code === 'PASSWORD_REQUIRED' || code === 'INVALID_PASSWORD') {
+      if (file === 'orderFile') passwordPrompt.value.orderFile = true
+      if (file === 'shipmentFile') passwordPrompt.value.shipmentFile = true
+    }
     errorMessage.value = error?.data?.message || error?.message || '处理失败，请检查文件格式后重试。'
   } finally {
     loading.value = false
@@ -94,17 +116,29 @@ async function submit() {
 
       <form class="panel" @submit.prevent="submit">
         <div class="upload-grid">
-          <label class="drop">
-            <span class="label">1. 快团团未发货订单</span>
-            <strong>{{ orderFile?.name || '选择 0626单子.xlsx' }}</strong>
-            <input type="file" accept=".xlsx,.xls" @change="onFileChange($event, 'order')" />
-          </label>
+          <div class="upload-column">
+            <label class="drop">
+              <span class="label">1. 快团团未发货订单</span>
+              <strong>{{ orderFile?.name || '选择 0626单子.xlsx' }}</strong>
+              <input type="file" accept=".xlsx,.xls" @change="onFileChange($event, 'order')" />
+            </label>
+            <label v-if="passwordPrompt.orderFile" class="password-field">
+              <span>打开密码</span>
+              <input v-model="orderPassword" type="password" autocomplete="off" placeholder="请输入快团团订单 Excel 密码" />
+            </label>
+          </div>
 
-          <label class="drop">
-            <span class="label">2. 快递公司订单 Excel</span>
-            <strong>{{ shipmentFile?.name || '选择自建打单文件' }}</strong>
-            <input type="file" accept=".xlsx,.xls" @change="onFileChange($event, 'shipment')" />
-          </label>
+          <div class="upload-column">
+            <label class="drop">
+              <span class="label">2. 快递公司订单 Excel</span>
+              <strong>{{ shipmentFile?.name || '选择自建打单文件' }}</strong>
+              <input type="file" accept=".xlsx,.xls" @change="onFileChange($event, 'shipment')" />
+            </label>
+            <label v-if="passwordPrompt.shipmentFile" class="password-field">
+              <span>打开密码</span>
+              <input v-model="shipmentPassword" type="password" autocomplete="off" placeholder="请输入快递公司订单 Excel 密码" />
+            </label>
+          </div>
         </div>
 
         <div class="actions">
@@ -254,6 +288,33 @@ h1 {
   border: 1px dashed #9aa88f;
   border-radius: 8px;
   background: #f7f9f2;
+}
+
+.upload-column {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.password-field {
+  display: grid;
+  gap: 8px;
+}
+
+.password-field span {
+  color: #607064;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.password-field input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #cfcdbf;
+  border-radius: 6px;
+  padding: 0 12px;
+  background: white;
+  color: #17211b;
 }
 
 .drop strong {

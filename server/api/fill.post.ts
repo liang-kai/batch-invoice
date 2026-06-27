@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import { createError, readMultipartFormData } from 'h3'
+import XlsxPopulate from 'xlsx-populate'
 
 type ParsedRow = {
   id: string
@@ -28,6 +29,7 @@ type FinalMatch = {
 }
 
 const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const OLE_HEADER = Buffer.from([0xd0, 0xcf, 0x11, 0xe0])
 
 function cellToString(value: ExcelJS.CellValue): string {
   if (value == null) return ''
@@ -63,10 +65,57 @@ function get(row: ParsedRow, names: string[]): string {
   return entry?.[1] ?? ''
 }
 
-async function parseWorkbook(buffer: Buffer) {
+function looksEncryptedWorkbook(buffer: Buffer) {
+  return OLE_HEADER.every((byte, index) => buffer[index] === byte)
+}
+
+function isPasswordError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return /password|decrypt|encrypted|cfb|ole|unsupported zip|invalid/i.test(message)
+}
+
+async function decryptWorkbookBuffer(buffer: Buffer, password: string) {
+  const source = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
+  const workbook = await XlsxPopulate.fromDataAsync(source, { password })
+  const output = await workbook.outputAsync()
+  return Buffer.from(output as any)
+}
+
+async function loadWorkbook(buffer: Buffer, password: string, label: 'orderFile' | 'shipmentFile') {
   const workbook = new ExcelJS.Workbook()
-  const source = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-  await workbook.xlsx.load(source)
+  const load = async (sourceBuffer: Buffer) => {
+    const source = sourceBuffer.buffer.slice(sourceBuffer.byteOffset, sourceBuffer.byteOffset + sourceBuffer.byteLength) as ArrayBuffer
+    await workbook.xlsx.load(source)
+  }
+
+  try {
+    await load(buffer)
+  } catch (error) {
+    if (!looksEncryptedWorkbook(buffer) && !isPasswordError(error)) {
+      throw error
+    }
+    if (!password) {
+      throw createError({
+        statusCode: 423,
+        statusMessage: 'Password Required',
+        message: label === 'orderFile' ? '快团团订单 Excel 需要打开密码。' : '快递公司订单 Excel 需要打开密码。',
+        data: { code: 'PASSWORD_REQUIRED', file: label },
+      })
+    }
+
+    try {
+      const decrypted = await decryptWorkbookBuffer(buffer, password)
+      await load(decrypted)
+    } catch {
+      throw createError({
+        statusCode: 401,
+        statusMessage: 'Invalid Password',
+        message: label === 'orderFile' ? '快团团订单 Excel 密码不正确。' : '快递公司订单 Excel 密码不正确。',
+        data: { code: 'INVALID_PASSWORD', file: label },
+      })
+    }
+  }
+
   const worksheet = workbook.worksheets[0]
   if (!worksheet) {
     throw createError({ statusCode: 400, message: 'Excel 文件里没有工作表。' })
@@ -382,14 +431,15 @@ export default defineEventHandler(async (event) => {
   }
 
   const filePart = (name: string) => parts.find((part) => part.name === name && part.data)
+  const textPart = (name: string) => parts.find((part) => part.name === name)?.data?.toString() || ''
   const orderFile = filePart('orderFile')
   const shipmentFile = filePart('shipmentFile')
   if (!orderFile?.data || !shipmentFile?.data) {
     throw createError({ statusCode: 400, message: '请同时上传快团团订单和快递公司订单 Excel。' })
   }
 
-  const parsedOrder = await parseWorkbook(orderFile.data)
-  const parsedShipment = await parseWorkbook(shipmentFile.data)
+  const parsedOrder = await loadWorkbook(orderFile.data, textPart('orderPassword'), 'orderFile')
+  const parsedShipment = await loadWorkbook(shipmentFile.data, textPart('shipmentPassword'), 'shipmentFile')
 
   const companyColumn = findHeaderIndex(parsedOrder.headers, ['物流公司'])
   const trackingColumn = findHeaderIndex(parsedOrder.headers, ['物流单号', '运单号', '快递单号'])
