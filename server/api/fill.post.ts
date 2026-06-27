@@ -339,8 +339,6 @@ export default defineEventHandler(async (event) => {
   }
 
   const filePart = (name: string) => parts.find((part) => part.name === name && part.data)
-  const textPart = (name: string) => parts.find((part) => part.name === name)?.data?.toString().trim() || ''
-
   const orderFile = filePart('orderFile')
   const shipmentFile = filePart('shipmentFile')
   if (!orderFile?.data || !shipmentFile?.data) {
@@ -356,9 +354,9 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: '快团团模板缺少“物流公司”或“物流单号”列。' })
   }
 
-  const apiKey = textPart('apiKey') || process.env.OPENAI_API_KEY || ''
-  const baseUrl = textPart('baseUrl') || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
-  const model = textPart('model') || process.env.OPENAI_MODEL || 'gpt-4.1-mini'
+  const apiKey = process.env.OPENAI_API_KEY || ''
+  const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+  const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
 
   let usedModel = false
   let matches: ModelMatch[]

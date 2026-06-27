@@ -27,9 +27,6 @@ type FillResponse = {
 
 const orderFile = ref<File | null>(null)
 const shipmentFile = ref<File | null>(null)
-const apiKey = ref('')
-const baseUrl = ref('https://api.openai.com/v1')
-const model = ref('gpt-4.1-mini')
 const loading = ref(false)
 const errorMessage = ref('')
 const result = ref<FillResponse | null>(null)
@@ -71,9 +68,6 @@ async function submit() {
     const form = new FormData()
     form.append('orderFile', orderFile.value)
     form.append('shipmentFile', shipmentFile.value)
-    form.append('apiKey', apiKey.value)
-    form.append('baseUrl', baseUrl.value)
-    form.append('model', model.value)
 
     result.value = await $fetch<FillResponse>('/api/fill', {
       method: 'POST',
@@ -110,21 +104,6 @@ async function submit() {
             <span class="label">2. 快递公司订单 Excel</span>
             <strong>{{ shipmentFile?.name || '选择自建打单文件' }}</strong>
             <input type="file" accept=".xlsx,.xls" @change="onFileChange($event, 'shipment')" />
-          </label>
-        </div>
-
-        <div class="settings">
-          <label>
-            <span>OpenAI 兼容 API Key</span>
-            <input v-model="apiKey" type="password" placeholder="留空则使用服务端环境变量；都没有时使用本地规则匹配" autocomplete="off" />
-          </label>
-          <label>
-            <span>Base URL</span>
-            <input v-model="baseUrl" type="url" placeholder="https://api.openai.com/v1" />
-          </label>
-          <label>
-            <span>模型</span>
-            <input v-model="model" type="text" placeholder="gpt-4.1-mini" />
           </label>
         </div>
 
@@ -283,33 +262,10 @@ h1 {
 }
 
 .label,
-.settings span,
 .metrics span {
   color: #607064;
   font-size: 13px;
   font-weight: 700;
-}
-
-.settings {
-  display: grid;
-  grid-template-columns: 1.3fr 1fr 0.8fr;
-  gap: 14px;
-  margin-top: 18px;
-}
-
-.settings label {
-  display: grid;
-  gap: 8px;
-}
-
-.settings input {
-  width: 100%;
-  min-height: 42px;
-  border: 1px solid #cfcdbf;
-  border-radius: 6px;
-  padding: 0 12px;
-  background: white;
-  color: #17211b;
 }
 
 .actions,
@@ -443,7 +399,6 @@ th {
   }
 
   .upload-grid,
-  .settings,
   .metrics,
   .tables {
     grid-template-columns: 1fr;
