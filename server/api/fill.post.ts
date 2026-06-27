@@ -308,6 +308,49 @@ function detectLogisticsCompany(trackingNo: string): string {
   return '未知快递'
 }
 
+function cloneStyle<T>(style: T): T {
+  if (!style || typeof style !== 'object') return style
+  return JSON.parse(JSON.stringify(style))
+}
+
+function cloneCellValue(value: ExcelJS.CellValue): ExcelJS.CellValue {
+  if (!value || typeof value !== 'object' || value instanceof Date) return value
+  return JSON.parse(JSON.stringify(value))
+}
+
+function duplicateOrderRow(worksheet: ExcelJS.Worksheet, sourceRowNumber: number, targetRowNumber: number) {
+  const sourceRow = worksheet.getRow(sourceRowNumber)
+  worksheet.insertRow(targetRowNumber, [])
+  const targetRow = worksheet.getRow(targetRowNumber)
+  targetRow.height = sourceRow.height
+  targetRow.hidden = sourceRow.hidden
+  targetRow.outlineLevel = sourceRow.outlineLevel
+
+  for (let columnNumber = 1; columnNumber <= worksheet.columnCount; columnNumber += 1) {
+    const sourceCell = sourceRow.getCell(columnNumber)
+    const targetCell = targetRow.getCell(columnNumber)
+    targetCell.value = cloneCellValue(sourceCell.value)
+    targetCell.style = cloneStyle(sourceCell.style)
+    targetCell.numFmt = sourceCell.numFmt
+    targetCell.alignment = cloneStyle(sourceCell.alignment)
+    targetCell.border = cloneStyle(sourceCell.border)
+    targetCell.fill = cloneStyle(sourceCell.fill)
+    targetCell.font = cloneStyle(sourceCell.font)
+    targetCell.protection = cloneStyle(sourceCell.protection)
+  }
+}
+
+function fillShipmentCells(
+  worksheet: ExcelJS.Worksheet,
+  rowNumber: number,
+  companyColumn: number,
+  trackingColumn: number,
+  trackingNo: string,
+) {
+  worksheet.getRow(rowNumber).getCell(companyColumn + 1).value = detectLogisticsCompany(trackingNo)
+  worksheet.getRow(rowNumber).getCell(trackingColumn + 1).value = trackingNo
+}
+
 function makeFinalMatches(orders: ParsedRow[], shipments: ParsedRow[], modelMatches: ModelMatch[]): FinalMatch[] {
   const shipmentById = new Map(shipments.map((shipment) => [shipment.id, shipment]))
   const used = new Set<string>()
@@ -384,7 +427,9 @@ export default defineEventHandler(async (event) => {
   const successes: any[] = []
   const failures: any[] = []
 
-  for (const item of finalMatches) {
+  const orderedMatches = [...finalMatches].sort((a, b) => b.order.rowNumber - a.order.rowNumber)
+
+  for (const item of orderedMatches) {
     const orderNo = get(item.order, ['订单号'])
     const recipient = get(item.order, ['收货人'])
     if (!item.shipments?.length) {
@@ -398,21 +443,28 @@ export default defineEventHandler(async (event) => {
     }
 
     const trackingNumbers = item.shipments.map((shipment) => get(shipment, ['运单号', '物流单号', '快递单号'])).filter(Boolean)
-    const companies = Array.from(new Set(trackingNumbers.map(detectLogisticsCompany).filter(Boolean)))
-    const trackingNo = trackingNumbers.join(',')
-    const logisticsCompany = companies.join(',') || '未知快递'
-    parsedOrder.worksheet.getRow(item.order.rowNumber).getCell(companyColumn + 1).value = logisticsCompany
-    parsedOrder.worksheet.getRow(item.order.rowNumber).getCell(trackingColumn + 1).value = trackingNo
+    const firstTrackingNo = trackingNumbers[0] ?? ''
+    fillShipmentCells(parsedOrder.worksheet, item.order.rowNumber, companyColumn, trackingColumn, firstTrackingNo)
+
+    for (let index = 1; index < trackingNumbers.length; index += 1) {
+      const targetRowNumber = item.order.rowNumber + index
+      duplicateOrderRow(parsedOrder.worksheet, item.order.rowNumber, targetRowNumber)
+      fillShipmentCells(parsedOrder.worksheet, targetRowNumber, companyColumn, trackingColumn, trackingNumbers[index]!)
+    }
+
     successes.push({
       rowNumber: item.order.rowNumber,
       orderId: orderNo,
       recipient,
-      trackingNo,
-      logisticsCompany,
+      trackingNo: trackingNumbers.join(','),
+      logisticsCompany: Array.from(new Set(trackingNumbers.map(detectLogisticsCompany).filter(Boolean))).join(',') || '未知快递',
       shipmentRecipient: get(item.shipments[0]!, ['收件人姓名', '收货人']),
       reason: item.reason,
     })
   }
+
+  successes.sort((a, b) => a.rowNumber - b.rowNumber)
+  failures.sort((a, b) => a.rowNumber - b.rowNumber)
 
   const buffer = await parsedOrder.workbook.xlsx.writeBuffer()
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
